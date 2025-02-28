@@ -6,4 +6,4 @@ SOURCES_VHDL := \
 
 TB_TOP := adder_tb
 
-include ../../scripts/vivado.mk
+include ../../scripts/vivado_library.mk
