@@ -30,7 +30,7 @@
 ###################################################################
 
 # phony targets
-.PHONY: fpga vivado clean program config synth impl flash
+.PHONY: fpga vivado clean program config synth impl flash simulate waves
 
 # prevent make from deleting intermediate files and reports
 .PRECIOUS: %.xpr %.bit %.mcs %.prm
@@ -39,6 +39,7 @@
 CONFIG ?= config.mk
 -include $(CONFIG)
 
+FPGA_PART ?= xc7z045ffg900-1
 BUILD_DIR ?= build
 FPGA_TOP ?= fpga
 PROJECT ?= $(FPGA_TOP)
@@ -46,6 +47,21 @@ PROJECT ?= $(FPGA_TOP)
 VIVADO_OPTS += -nojournal -nolog -tempDir $(BUILD_DIR)
 
 BPREFIX = $(BUILD_DIR)/$(PROJECT)
+
+# compile options
+COMP_OPTS := \
+    --incr \
+    --relax \
+
+NUM_JOBS ?= 8
+
+# compile sources
+SOURCES_SV := $(filter %.sv,$(SYN_FILES))
+SOURCES_V := $(filter %.v,$(SYN_FILES))
+SOURCES_VHDL := $(filter %.vhd,$(SYN_FILES))
+SOURCES_SV += $(filter %.sv,$(SIM_FILES))
+SOURCES_V += $(filter %.v,$(SIM_FILES))
+SOURCES_VHDL += $(filter %.vhd,$(SIM_FILES))
 
 ###################################################################
 # Main Targets
@@ -63,6 +79,8 @@ vivado: $(BPREFIX).xpr
 
 clean:
 	rm -rf $(BUILD_DIR)
+	rm -rf *.jou *.log *.pb *.wdb xsim.dir .Xil
+	rm -rf .*.timestamp
 
 ###################################################################
 # Target implementations
@@ -87,7 +105,8 @@ $(BUILD_DIR)/create_project.tcl: Makefile $(XCI_FILES) $(IP_TCL_FILES)
 	if [ "$(XDC_FILES)" ]; then echo "add_files -fileset constrs_1 $(XDC_FILES)" >> $@; fi
 	if [ "$(SIM_FILES)" ]; then echo "add_files -fileset sim_1 $(SIM_FILES)" >> $@; fi
 	if [ "$(IP_REPO_PATHS)" ]; then
-		echo "set_property ip_repo_paths [concat $(IP_REPO_PATHS)] [current_project]" >> $@; fi
+		echo "set_property ip_repo_paths [concat $(IP_REPO_PATHS)] [current_project]" >> $@;
+		echo "update_ip_catalog" >> $@; fi
 	for x in $(XCI_FILES); 			do echo "import_ip $$x"	>> $@; done
 	for x in $(IP_TCL_FILES); 		do echo "source $$x" 	>> $@; done
 	for x in $(CONFIG_TCL_FILES); 	do echo "source $$x" 	>> $@; done
@@ -114,23 +133,29 @@ $(BPREFIX).runs/synth_1/$(PROJECT).dcp: $(BUILD_DIR)/create_project.tcl $(BUILD_
 	@cat << EOF > $(BUILD_DIR)/run_synth.tcl
 		open_project $(BPREFIX).xpr
 		reset_run synth_1
-		launch_runs -jobs 4 synth_1
+		launch_runs -jobs $(NUM_JOBS) synth_1
 		wait_on_run synth_1
 	EOF
 	vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/run_synth.tcl
 
 # implementation run
 $(BPREFIX).runs/impl_1/$(PROJECT)_routed.dcp: $(BPREFIX).runs/synth_1/$(PROJECT).dcp
-	@cat << EOF > $(BUILD_DIR)/run_impl.tcl
-		open_project $(BPREFIX).xpr
-		reset_run impl_1
-		launch_runs -jobs 4 impl_1
-		wait_on_run impl_1
-		open_run impl_1
-		report_utilization -file $(BPREFIX)_utilization.rpt
-		report_utilization -hierarchical -file $(BPREFIX)_utilization_hierarchical.rpt
-	EOF
-	vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/run_impl.tcl
+	# if XDC_FILES is empty, skip the implementation run
+	if [ -z "$(XDC_FILES)" ]; then
+		echo "No constraints file found, skipping implementation run!"
+		exit 1
+	else
+		@cat << EOF > $(BUILD_DIR)/run_impl.tcl
+			open_project $(BPREFIX).xpr
+			reset_run impl_1
+			launch_runs -jobs $(NUM_JOBS) impl_1
+			wait_on_run impl_1
+			open_run impl_1
+			report_utilization -file $(BPREFIX)_utilization.rpt
+			report_utilization -hierarchical -file $(BPREFIX)_utilization_hierarchical.rpt
+		EOF
+		vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/run_impl.tcl
+	fi
 
 # bit file
 $(BPREFIX).bit $(BPREFIX).ltx: $(BPREFIX).runs/impl_1/$(PROJECT)_routed.dcp
@@ -169,17 +194,22 @@ impl: $(BPREFIX).runs/synth_1/$(PROJECT).dcp
 	make $<
 
 program: $(BUILD_DIR)/$(PROJECT).bit
-	@cat << EOF > $(BUILD_DIR)/program.tcl
-		open_hw_manager
-		connect_hw_server
-		open_hw_target
-		current_hw_device [lindex [get_hw_devices] 1]
-		refresh_hw_device -update_hw_probes false [current_hw_device]  
-		set_property PROGRAM.FILE {$<} [current_hw_device]
-		program_hw_devices [current_hw_device]
-		exit
-	EOF
-	@vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/program.tcl
+	if [ ! -e $< ]; then
+		echo "No bit file found, skipping programming!"
+		exit 1
+	else
+		@cat << EOF > $(BUILD_DIR)/program.tcl
+			open_hw_manager
+			connect_hw_server
+			open_hw_target
+			current_hw_device [lindex [get_hw_devices] 1]
+			refresh_hw_device -update_hw_probes false [current_hw_device]  
+			set_property PROGRAM.FILE {$<} [current_hw_device]
+			program_hw_devices [current_hw_device]
+			exit
+		EOF
+		vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/program.tcl
+	fi
 
 %.mcs %.prm: %.bit
 	@cat << EOF > $(BUILD_DIR)/generate_mcs.tcl
@@ -208,7 +238,7 @@ ip_gen: $(BPREFIX).xpr
 		set_property vendor              {xilinx.com}            [ipx::current_core]
 		set_property library             {user}                  [ipx::current_core]
 		set_property taxonomy            {{/demo}}               [ipx::current_core]
-		set_property vendor_display_name {shino}                 [ipx::current_core]
+		set_property vendor_display_name {tonyxu}                [ipx::current_core]
 		set_property company_url         {xilinx.com}            [ipx::current_core]
 		set_property supported_families  {
 			virtex7    Production \
@@ -233,27 +263,115 @@ ip_gen: $(BPREFIX).xpr
 	vivado.bat $(VIVADO_OPTS) -mode batch -source $(BUILD_DIR)/ip_gen.tcl
 
 flash: $(BUILD_DIR)/$(FPGA_TOP).mcs $(BUILD_DIR)/$(FPGA_TOP).prm
-	@cat << EOF > $(BUILD_DIR)/flash.tcl
-		open_hw
-		connect_hw_server
-		open_hw_target
-		current_hw_device [lindex [get_hw_devices] 0]
-		refresh_hw_device -update_hw_probes false [current_hw_device]
-		create_hw_cfgmem -hw_device [current_hw_device] [lindex [get_cfgmem_parts {mt25qu01g-spi-x1_x2_x4}] 0]
-		current_hw_cfgmem -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM [current_hw_device]]
-		set_property PROGRAM.FILES [list \"$(BUILD_DIR)/$(FPGA_TOP).mcs\"] [current_hw_cfgmem]
-		set_property PROGRAM.PRM_FILES [list \"$(BUILD_DIR)/$(FPGA_TOP).prm\"] [current_hw_cfgmem]
-		set_property PROGRAM.ERASE 1 [current_hw_cfgmem]
-		set_property PROGRAM.CFG_PROGRAM 1 [current_hw_cfgmem]
-		set_property PROGRAM.VERIFY 1 [current_hw_cfgmem]
-		set_property PROGRAM.CHECKSUM 0 [current_hw_cfgmem]
-		set_property PROGRAM.ADDRESS_RANGE {use_file} [current_hw_cfgmem]
-		set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} [current_hw_cfgmem]
-		create_hw_bitstream -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM_BITFILE [current_hw_device]]
-		program_hw_devices [current_hw_device]
-		refresh_hw_device [current_hw_device]
-		program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]
-		boot_hw_device [current_hw_device]
-		exit
-	EOF
-	vivado.bat $(VIVADO_OPTS) -mode batch -source flash.tcl
+	if [ ! -e $(BUILD_DIR)/$(FPGA_TOP).prm ]; then
+		echo "No prm file found, skipping flash programming!"
+		exit 1
+	else
+		@cat << EOF > $(BUILD_DIR)/flash.tcl
+			open_hw
+			connect_hw_server
+			open_hw_target
+			current_hw_device [lindex [get_hw_devices] 0]
+			refresh_hw_device -update_hw_probes false [current_hw_device]
+			create_hw_cfgmem -hw_device [current_hw_device] [lindex [get_cfgmem_parts {mt25qu01g-spi-x1_x2_x4}] 0]
+			current_hw_cfgmem -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM [current_hw_device]]
+			set_property PROGRAM.FILES [list \"$(BUILD_DIR)/$(FPGA_TOP).mcs\"] [current_hw_cfgmem]
+			set_property PROGRAM.PRM_FILES [list \"$(BUILD_DIR)/$(FPGA_TOP).prm\"] [current_hw_cfgmem]
+			set_property PROGRAM.ERASE 1 [current_hw_cfgmem]
+			set_property PROGRAM.CFG_PROGRAM 1 [current_hw_cfgmem]
+			set_property PROGRAM.VERIFY 1 [current_hw_cfgmem]
+			set_property PROGRAM.CHECKSUM 0 [current_hw_cfgmem]
+			set_property PROGRAM.ADDRESS_RANGE {use_file} [current_hw_cfgmem]
+			set_property PROGRAM.UNUSED_PIN_TERMINATION {pull-none} [current_hw_cfgmem]
+			create_hw_bitstream -hw_device [current_hw_device] [get_property PROGRAM.HW_CFGMEM_BITFILE [current_hw_device]]
+			program_hw_devices [current_hw_device]
+			refresh_hw_device [current_hw_device]
+			program_hw_cfgmem -hw_cfgmem [current_hw_cfgmem]
+			boot_hw_device [current_hw_device]
+			exit
+		EOF
+		vivado.bat $(VIVADO_OPTS) -mode batch -source flash.tcl
+	fi
+
+###################################################################
+# Simulation
+###################################################################
+# running simulation without drawing waveforms
+.PHONY : simulate
+simulate : $(FPGA_SIM_TOP)_snapshot.wdb
+
+.PHONY : elaborate
+elaborate : .elab.timestamp
+
+.PHONY : compile
+compile : .comp_sv.timestamp .comp_v.timestamp .comp_vhdl.timestamp
+
+# drawing waveforms
+.PHONY : waves
+waves : $(FPGA_SIM_TOP)_snapshot.wdb
+	@echo
+	@echo "### OPENING WAVES ###"
+	xsim --gui $(FPGA_SIM_TOP)_snapshot.wdb
+
+# simulation
+$(FPGA_SIM_TOP)_snapshot.wdb : .elab.timestamp
+	@echo
+	@echo "### RUNNING SIMULATION ###"
+	xsim $(FPGA_SIM_TOP)_snapshot -tclbatch ../../scripts/xsim_cfg.tcl
+
+# elaboration
+.elab.timestamp : .comp_sv.timestamp .comp_v.timestamp .comp_vhdl.timestamp
+	@echo
+	@echo "### ELABORATING ###"
+	if [ -z "$(FPGA_SIM_TOP)" ]; then
+		echo "No top module for simulation found, skipping elaboration!"
+		exit 1
+	else
+		xelab -debug all -top $(FPGA_SIM_TOP) -snapshot $(FPGA_SIM_TOP)_snapshot
+		touch .elab.timestamp
+	fi
+
+# compiling systemverilog
+ifeq ($(strip $(SOURCES_SV)),)
+.comp_sv.timestamp :
+	@echo
+	@echo "### NO SYSTEMVERILOG SOURCES GIVEN ###"
+	@echo "### SKIPPED SYSTEMVERILOG COMPILATION ###"
+	touch .comp_sv.timestamp
+else
+.comp_sv.timestamp : $(SOURCES_SV)
+	@echo
+	@echo "### COMPILING SYSTEMVERILOG ###"
+	xvlog --sv $(COMP_OPTS) $(DEFINES_SV) $(SOURCES_SV)
+	touch .comp_sv.timestamp
+endif
+
+# compiling verilog
+ifeq ($(strip $(SOURCES_V)),)
+.comp_v.timestamp :
+	@echo
+	@echo "### NO VERILOG SOURCES GIVEN ###"
+	@echo "### SKIPPED VERILOG COMPILATION ###"
+	touch .comp_v.timestamp
+else
+.comp_v.timestamp : $(SOURCES_V)
+	@echo
+	@echo "### COMPILING VERILOG ###"
+	xvlog $(COMP_OPTS) $(DEFINES_V) $(SOURCES_V)
+	touch .comp_v.timestamp
+endif
+
+# compiling vhdl
+ifeq ($(strip $(SOURCES_VHDL)),)
+.comp_vhdl.timestamp :
+	@echo
+	@echo "### NO VHDL SOURCES GIVEN ###"
+	@echo "### SKIPPED VHDL COMPILATION ###"
+	touch .comp_vhdl.timestamp
+else
+.comp_vhdl.timestamp : $(SOURCES_VHDL)
+	@echo
+	@echo "### COMPILING VHDL ###"
+	xvhdl $(COMP_OPTS) $(SOURCES_VHDL)
+	touch .comp_vhdl.timestamp
+endif

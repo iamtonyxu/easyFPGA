@@ -11,4 +11,4 @@ SYN_FILES += $(wildcard src/*.v)
 # Constraints
 XDC_FILES += constraints/zc706_system_constr.xdc
 
-include ../../scripts/vivado_project.mk
+include ../../scripts/vivado.mk
