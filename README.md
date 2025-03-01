@@ -1,9 +1,11 @@
 # easyFPGA
-## Makefile管理Xilinx-FPGA项目开发 (part-1)
-**branch name:** __demo_makefile_sim__
-这个branch演示如何使用Makefile管理Vivado Simulator流程。
+## Makefile管理Xilinx-FPGA项目开发 (part-2)
+**branch name:** __demo_makefile_project__
+这个branch演示了:
+1. Makefile管理Vivado Simulator
+2. Makefile管理Vivado Project，包括synth/impl/program/ip_gen等  
 
-**一个简单的例子**
+**一个简单的例子**  
 加法器adder包括了设计文件adder.vhd,仿真文件adder_tb.v和makefile，目录如下：
 - libaray
 	- adder
@@ -14,48 +16,44 @@
 
 makefile的内容如下，用户只需要修改源文件和指定顶层文件，便能在其他项目复用。
 ```makefile
-#添加verilog源文件
-SOURCES_V := \
-	./src/adder_tb.v \
-#添加VHDL源文件
-SOURCES_VHDL := \
-	./src/adder.vhd \
-#指定顶层文件
-TB_TOP := adder_tb
-#引用VIVADO流程的makefile模块
+# synth top module name
+FPGA_TOP = adder
+
+# simulation top module name
+FPGA_SIM_TOP = adder_tb
+
+# Files for synthesis
+SYN_FILES += $(wildcard src/*.v)
+SYN_FILES += $(wildcard src/*.vhd)
+
 include ../../scripts/vivado.mk
 ```
 
 **支持的命令**
 ```bash
-make # same as "make simulate"
 make simulate
 make waves #check waves in vivado
-make compile
+make complile
+make elaborate
+make ip_gen
 make clean
 ```
 
-make命令的结果输出如下：
+make waves命令的结果输出如下：
 ``` bash
-$ make
+$ make waves
 ### NO SYSTEMVERILOG SOURCES GIVEN ###
 ### SKIPPED SYSTEMVERILOG COMPILATION ###
-touch .comp_sv.timestamp
 
 ### COMPILING VERILOG ###
-xvlog --incr --relax   ./src/adder_tb.v
 INFO: [VRFC 10-2263] Analyzing Verilog file "C:/repo2/easyFPGA/library/adder/src/adder_tb.v" into library work
 INFO: [VRFC 10-311] analyzing module adder_tb
-touch .comp_v.timestamp
 
 ### COMPILING VHDL ###
-xvhdl --incr --relax  ./src/adder.vhd
 INFO: [VRFC 10-163] Analyzing VHDL file "C:/repo2/easyFPGA/library/adder/src/adder.vhd" into library work
 INFO: [VRFC 10-3107] analyzing entity 'adder'
-touch .comp_vhdl.timestamp
 
 ### ELABORATING ###
-xelab -debug all -top adder_tb -snapshot adder_tb_snapshot
 Vivado Simulator v2022.2
 Copyright 1986-1999, 2001-2022 Xilinx, Inc. All Rights Reserved.
 Running: C:/Xilinx/Vivado/2022.2/bin/unwrapped/win64.o/xelab.exe -debug all -top adder_tb -snapshot adder_tb_snapshot
@@ -73,10 +71,8 @@ Compiling package ieee.numeric_std
 Compiling architecture behavioral of entity work.adder [adder_default]
 Compiling module work.adder_tb
 Built simulation snapshot adder_tb_snapshot
-touch .elab.timestamp
 
 ### RUNNING SIMULATION ###
-xsim adder_tb_snapshot -tclbatch ../../scripts/xsim_cfg.tcl
 
 ****** xsim v2022.2 (64-bit)
   **** SW Build 3671981 on Fri Oct 14 05:00:03 MDT 2022
@@ -97,13 +93,9 @@ Test Case 5: Single bit addition
 Test Case 6: All bits set
 Test finished!
 ## exit
-INFO: [Common 17-206] Exiting xsim at Thu Feb 27 15:07:30 2025...
-```
-make waves命令将启动Vivado GUI并导入仿真波形文件：
-```bash
-$ make waves
+INFO: [Common 17-206] Exiting xsim at Sat Mar  1 12:37:31 2025...
+
 ### OPENING WAVES ###
-xsim --gui adder_tb_snapshot.wdb
 
 ****** xsim v2022.2 (64-bit)
   **** SW Build 3671981 on Fri Oct 14 05:00:03 MDT 2022
@@ -113,4 +105,42 @@ xsim --gui adder_tb_snapshot.wdb
 start_gui
 
 ```
-![仿真波形](./library/adder/snapshot/make_waves.png)
+![仿真波形](./library/adder/snapshot/make_waves.png)  
+
+**另一个简单的例子**  
+demo_zc706包括了可综合文件switch2leds.v,约束文件zc706_system_constr.xdc和makefile，目录如下：
+- demo_zc706
+	- src
+		- switch2leds.v
+	- constraints
+		- zc706_system_constr.xdc
+	- makefile  
+
+makefile的内容如下，用户只需要重新指定源文件和约束文件等，便能在其他项目复用。
+```makefile
+BUILD_DIR = build
+
+# FPGA settings
+PROJECT = demo_zc706
+FPGA_PART = xc7z045ffg900-1
+FPGA_TOP = switch2leds
+
+# Files for synthesis
+SYN_FILES += $(wildcard src/*.v)
+
+# Constraints
+XDC_FILES += constraints/zc706_system_constr.xdc
+
+include ../../scripts/vivado.mk
+```
+
+**支持的命令**
+```bash
+make all # build project and generate bit file
+make waves #simulate and check waves in vivado
+make synth
+make impl
+make program
+make ip_gen
+make clean
+```

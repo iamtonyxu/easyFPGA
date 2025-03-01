@@ -103,4 +103,8 @@ qdb
 tmp-clearbox
 *.bin
 .qsys_edit
-modelsim.ini
+*modelsim.ini
+*.timestamp
+*.wdb
+*.pb
+*xsim.dir
