@@ -104,6 +104,9 @@ tmp-clearbox
 *.bin
 .qsys_edit
 *modelsim.ini
+*.mti
+*.mpf
+*.wlf
 *.timestamp
 *.wdb
 *.pb

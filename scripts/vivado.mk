@@ -80,7 +80,7 @@ vivado: $(BPREFIX).xpr
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf *.jou *.log *.pb *.wdb xsim.dir .Xil
-	rm -rf .*.timestamp
+	rm -rf .*.timestamp *.mti *.mpf *.wlf
 
 ###################################################################
 # Target implementations
