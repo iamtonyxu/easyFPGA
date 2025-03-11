@@ -41,9 +41,12 @@ CONFIG ?= config.mk
 
 FPGA_PART ?= xc7z045ffg900-1
 BUILD_DIR ?= build
-FPGA_TOP ?= fpga
-PROJECT ?= $(FPGA_TOP)
-
+# use the name of the directory as the project name
+PROJECT ?= $(shell basename $(shell pwd))
+# use the name of the directory as the top module name
+FPGA_TOP ?= $(shell basename $(shell pwd))
+# use the name of the directory plus '_tb' as the simulation top module name
+FPGA_SIM_TOP ?= $(shell basename $(shell pwd))_tb
 VIVADO_OPTS += -nojournal -nolog -tempDir $(BUILD_DIR)
 
 BPREFIX = $(BUILD_DIR)/$(PROJECT)
