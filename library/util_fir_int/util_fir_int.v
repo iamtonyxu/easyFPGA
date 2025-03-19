@@ -52,7 +52,7 @@ module util_fir_int (
 
   reg         s_axis_data_tready_r;
   reg         s_axis_data_tvalid_r;
-  reg   [2:0] ready_counter;
+  reg   [2:0] ready_counter = 0;
 
   always @(posedge aclk) begin
     ready_counter <= ready_counter + 1;
@@ -65,6 +65,7 @@ module util_fir_int (
   end
 
   assign {channel_1, channel_0} = (interpolate == 1'b1) ? {m_axis_data_tdata_s[30:16],1'b0,m_axis_data_tdata_s[14:0], 1'b0} : s_axis_data_tdata;
+
   assign s_axis_data_tready = (interpolate == 1'b1) ? s_axis_data_tready_r : dac_read;
   assign s_axis_data_tvalid_s = (interpolate == 1'b1) ? s_axis_data_tvalid_r : s_axis_data_tvalid;
 

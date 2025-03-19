@@ -3,7 +3,9 @@
 module util_fir_int_tb;
 
     // Parameters
-    parameter CLK_PERIOD = 16; // 61.44MHz clock (based on util_fir_int_ip_1.tcl)
+    parameter CLK_PERIOD = 10; // 100 MHz
+    parameter INT_RATE = 8;   // Interpolation rate
+    parameter SAMPLES = 120; // Number of samples, same as in waveform.txt
 
     // Signals
     reg         aclk;
@@ -15,6 +17,69 @@ module util_fir_int_tb;
     wire        m_axis_data_tvalid;
     reg         interpolate;
     reg         dac_read;
+
+    // waveform file
+    integer file, status, i;
+    integer index;
+    reg [31:0] ifir_in[0:SAMPLES-1];
+    reg [31:0] ifir_out[0:SAMPLES*INT_RATE-1];
+
+    // save channel_0 and channel_1 to ifir_out while m_axis_data_tvalid lasts high
+    integer file1, jj = 0;
+    initial begin
+        // Initialize ifir_out
+        for (i = 0; i < SAMPLES*INT_RATE; i = i + 1) begin
+            ifir_out[i] = 0;
+        end
+
+        // delay INT_RATE*(INT_RATE+1) clock periods after m_axis_data_tvalid goes high
+        // to compensate ifir delay
+        repeat(INT_RATE*(INT_RATE+1)) begin
+            @(posedge aclk);
+            wait (m_axis_data_tvalid == 1);
+        end
+
+        // save channel_0 and channel_1 to ifir_out
+        jj = 0;
+        repeat(SAMPLES*INT_RATE) begin
+            @(posedge aclk);
+            if (m_axis_data_tvalid == 1) begin
+                ifir_out[jj] = {channel_1, channel_0};
+                jj = jj + 1;
+            end
+        end
+
+        // write ifir_out to file
+        file1 = $fopen("../../../../ifir_out_vivado.txt", "w");
+        if (file1 == 0) begin
+            $display("Error: Could not open file");
+            $finish;
+        end
+        for (jj = 0; jj < SAMPLES*INT_RATE; jj = jj + 1) begin
+            $fwrite(file1, "%h\n", ifir_out[jj]);
+        end
+        $fclose(file1);
+        $display("ifir_out.txt file created");
+        $finish;
+    end
+
+    // Read waveform file
+    initial begin
+        file = $fopen("../../../../waveform.txt", "r");
+        if (file == 0) begin
+            $display("Error: Could not open waveform file");
+            $finish;
+        end
+
+        for (i = 0; i < SAMPLES; i = i + 1) begin
+            status = $fscanf(file, "%h", ifir_in[i]);
+            if(status != 1) begin
+                $display("Error: Failed to read data at line %0d", i + 1);
+                $finish;
+            end
+        end
+        $fclose(file);
+    end
 
     // Clock generation
     initial begin
@@ -37,10 +102,6 @@ module util_fir_int_tb;
 
     // Test stimulus
     initial begin
-        // Initialize waveform dumping
-        $dumpfile("tb_util_fir_int.vcd");
-        $dumpvars(0, util_fir_int_tb);
-
         // Initialize signals
         s_axis_data_tvalid = 0;
         s_axis_data_tdata = 0;
@@ -50,70 +111,21 @@ module util_fir_int_tb;
         // Wait 100ns for global reset
         #100;
 
-        // Test Case 1: Direct path (no interpolation)
-        $display("Test Case 1: Direct path testing");
-        interpolate = 0;
-        dac_read = 1;
-        
-        // Send test pattern
-        repeat(5) begin
-            @(posedge aclk);
-            s_axis_data_tvalid = 1;
-            s_axis_data_tdata = {16'h4000, 16'h2000}; // Test values for both channels
-            @(posedge aclk);
-            s_axis_data_tvalid = 0;
-            #(CLK_PERIOD * 2);
-        end
-        
-        #(CLK_PERIOD * 10);
-
-        // Test Case 2: Interpolation path
-        $display("Test Case 2: Interpolation path testing");
+        // Test Case 1: send test data test with interpolate on
+        $display("Test Case: send test data test");
         interpolate = 1;
         dac_read = 0;
-
-        // Send test pattern with interpolation
-        repeat(5) begin
-            @(posedge aclk);
+        
+        index = 0;
+        repeat(SAMPLES*2) begin
+            @(negedge s_axis_data_tready);
             s_axis_data_tvalid = 1;
-            s_axis_data_tdata = {16'h7FFF, 16'h3FFF}; // Maximum and half scale
-            @(posedge aclk);
-            s_axis_data_tvalid = 0;
-            #(CLK_PERIOD * 8); // Wait for interpolated outputs
-        end
-
-        #(CLK_PERIOD * 20);
-
-        // Test Case 3: Dynamic switching
-        $display("Test Case 3: Dynamic switching test");
-        repeat(3) begin
-            interpolate = ~interpolate;
-            dac_read = ~dac_read;
-            
-            repeat(3) begin
-                @(posedge aclk);
-                s_axis_data_tvalid = 1;
-                s_axis_data_tdata = {16'h1111, 16'h2222};
-                @(posedge aclk);
-                s_axis_data_tvalid = 0;
-                #(CLK_PERIOD * 4);
+            s_axis_data_tdata = ifir_in[index];
+            index = index + 1;
+            if (index == SAMPLES) begin
+                index = 0;
             end
-            
-            #(CLK_PERIOD * 10);
         end
-
-        // Test Case 4: Back-to-back data
-        $display("Test Case 4: Back-to-back data test");
-        interpolate = 1;
-        dac_read = 0;
-        
-        repeat(10) begin
-            @(posedge aclk);
-            s_axis_data_tvalid = 1;
-            s_axis_data_tdata = {$random, $random}; // Random test data
-        end
-        @(posedge aclk);
-        s_axis_data_tvalid = 0;
 
         // Wait for processing to complete
         #(CLK_PERIOD * 100);
@@ -129,12 +141,6 @@ module util_fir_int_tb;
             $display("Time=%0t: channel_0=%h, channel_1=%h", 
                     $time, channel_0, channel_1);
         end
-    end
-
-    // Monitor ready signal
-    always @(s_axis_data_tready) begin
-        $display("Time=%0t: s_axis_data_tready changed to %b", 
-                $time, s_axis_data_tready);
     end
 
     // Timeout watchdog
