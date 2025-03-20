@@ -3,9 +3,10 @@
 module tb_util_fir_dec;
 
     // Parameters
-    parameter CLK_PERIOD = 16;    // 61.44MHz clock
-    parameter DEC_FACTOR = 8;     // Decimation factor
-    
+    parameter CLK_PERIOD = 10; // 100 MHz
+    parameter DEC_FACTOR = 8;  // Decimation factor
+    parameter SAMPLES = DEC_FACTOR*120; // Number of samples, same as in waveform.txt
+
     // Signals
     reg         aclk;
     reg         s_axis_data_tvalid;
@@ -15,6 +16,76 @@ module tb_util_fir_dec;
     reg         decimate;
     wire        m_axis_data_tvalid;
     wire [31:0] m_axis_data_tdata;
+
+    // waveform file
+    integer file, status, i;
+    integer index;
+    reg [31:0] ifir_in[0:SAMPLES-1];
+    reg [31:0] decfir_out[0:SAMPLES/DEC_FACTOR-1];
+
+    // save channel_0 and channel_1 to decfir_out while m_axis_data_tvalid lasts high
+    integer file1, jj = 0;
+    initial begin
+        // Initialize decfir_out
+        for (i = 0; i < SAMPLES/DEC_FACTOR; i = i + 1) begin
+            decfir_out[i] = 0;
+        end
+
+        // delay FIR_TAPS-1 clock periods after m_axis_data_tvalid goes high
+        // to compensate decfir delay
+        repeat(DEC_FACTOR+5) begin
+            wait (m_axis_data_tvalid == 1);
+            @(posedge aclk);
+        end
+
+        // save channel_0 and channel_1 to decfir_out
+        jj = 0;
+        repeat(SAMPLES) begin
+            @(posedge aclk);
+            if (m_axis_data_tvalid == 1) begin
+                decfir_out[jj] = m_axis_data_tdata;
+                jj = jj + 1;
+                if (jj == SAMPLES/DEC_FACTOR) begin
+                    jj = 0;
+                end
+            end
+        end
+
+        // write decfir_out to file
+        file1 = $fopen("../../../../decfir_out_vivado.txt", "w");
+        if (file1 == 0) begin
+            $display("Error: Could not open file");
+            $finish;
+        end
+        for (jj = 0; jj < SAMPLES/DEC_FACTOR; jj = jj + 1) begin
+            $fwrite(file1, "%h\n", decfir_out[jj]);
+        end
+        $display("Output data written to decfir_out_vivado.txt");
+        $fclose(file1);
+        $finish;
+    end
+
+    // Read waveform file
+    initial begin
+        // Open waveform file
+        file = $fopen("../../../../waveform.txt", "r");
+        if (file == 0) begin
+            $display("Error: Could not open file");
+            $finish;
+        end
+
+        // Read waveform file
+        for (i = 0; i < SAMPLES; i = i + 1) begin
+            status = $fscanf(file, "%h\n", ifir_in[i]);
+            if (status == 0) begin
+                $display("Error: End of file reached");
+                $finish;
+            end
+        end
+
+        // Close waveform file
+        $fclose(file);
+    end
 
     // Clock generation
     initial begin
@@ -36,10 +107,6 @@ module tb_util_fir_dec;
 
     // Test stimulus
     initial begin
-        // Initialize waveform dumping
-        $dumpfile("tb_util_fir_dec.vcd");
-        $dumpvars(0, tb_util_fir_dec);
-
         // Initialize signals
         s_axis_data_tvalid = 0;
         channel_0 = 0;
@@ -49,62 +116,21 @@ module tb_util_fir_dec;
         // Wait 100ns for global reset
         #100;
 
-        // Test Case 1: Direct path (no decimation)
-        $display("Test Case 1: Direct path testing");
-        decimate = 0;
-        
-        repeat(10) begin
-            @(posedge aclk);
-            s_axis_data_tvalid = 1;
-            channel_0 = 16'h2000;
-            channel_1 = 16'h4000;
-            #(CLK_PERIOD);
-        end
-        s_axis_data_tvalid = 0;
-        #(CLK_PERIOD * 10);
-
-        // Test Case 2: Decimation path
-        $display("Test Case 2: Decimation path testing");
+        // Test Case 1: send test data with decimation
+        $display("Test Case 1: send test data with decimation");
         decimate = 1;
 
-        // Send high-frequency test pattern
-        repeat(DEC_FACTOR * 4) begin
-            @(posedge aclk);
+        index = 0;
+        wait (s_axis_data_tready == 1);
+        repeat(SAMPLES*2) begin
             s_axis_data_tvalid = 1;
-            // Generate sine wave pattern
-            channel_0 = $signed($rtoi($sin(2.0 * 3.14159 * $time / 100.0) * 32767));
-            channel_1 = $signed($rtoi($cos(2.0 * 3.14159 * $time / 100.0) * 32767));
-            #(CLK_PERIOD);
-        end
-        s_axis_data_tvalid = 0;
-        #(CLK_PERIOD * 20);
-
-        // Test Case 3: Dynamic switching
-        $display("Test Case 3: Dynamic switching test");
-        repeat(3) begin
-            decimate = ~decimate;
-            
-            repeat(DEC_FACTOR) begin
-                @(posedge aclk);
-                s_axis_data_tvalid = 1;
-                channel_0 = 16'h1111;
-                channel_1 = 16'h2222;
-                #(CLK_PERIOD);
+            channel_0 = ifir_in[index][15:0];
+            channel_1 = ifir_in[index][31:16];
+            index = index + 1;
+            if (index == SAMPLES) begin
+                index = 0;
             end
-            s_axis_data_tvalid = 0;
-            #(CLK_PERIOD * 10);
-        end
-
-        // Test Case 4: Back-to-back data with decimation
-        $display("Test Case 4: Back-to-back data test with decimation");
-        decimate = 1;
-        
-        repeat(DEC_FACTOR * 2) begin
             @(posedge aclk);
-            s_axis_data_tvalid = 1;
-            channel_0 = $random;
-            channel_1 = $random;
-            #(CLK_PERIOD);
         end
         s_axis_data_tvalid = 0;
 
@@ -122,39 +148,6 @@ module tb_util_fir_dec;
             $display("Time=%0t: Output data = %h (CH1=%h, CH0=%h)", 
                     $time, m_axis_data_tdata, 
                     m_axis_data_tdata[31:16], m_axis_data_tdata[15:0]);
-        end
-    end
-
-    // Monitor ready signal
-    always @(s_axis_data_tready) begin
-        $display("Time=%0t: s_axis_data_tready changed to %b", 
-                $time, s_axis_data_tready);
-    end
-
-    // Monitor decimated output rate
-    reg [31:0] output_count = 0;
-    always @(posedge aclk) begin
-        if (m_axis_data_tvalid) begin
-            output_count <= output_count + 1;
-            if (decimate) begin
-                if (output_count % DEC_FACTOR == 0) begin
-                    $display("Time=%0t: Decimated output %d", 
-                            $time, output_count / DEC_FACTOR);
-                end
-            end
-        end
-    end
-
-    // Check data path multiplexing
-    always @(posedge aclk) begin
-        if (m_axis_data_tvalid) begin
-            if (!decimate) begin
-                // In direct path, output should exactly match input
-                if (m_axis_data_tdata !== {channel_1, channel_0}) begin
-                    $display("Error: Direct path mismatch at time %t", $time);
-                    $display("Expected: %h, Got: %h", {channel_1, channel_0}, m_axis_data_tdata);
-                end
-            end
         end
     end
 

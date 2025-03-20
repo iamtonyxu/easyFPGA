@@ -7,7 +7,7 @@ set fir_decim [create_ip -name fir_compiler -vendor xilinx.com -library ip -vers
  set_property -dict [ list \
 CONFIG.Clock_Frequency {61.44} \
 CONFIG.CoefficientSource {COE_File} \
-CONFIG.Coefficient_File {../../../../coefile_dec.coe} \
+CONFIG.Coefficient_File {../../../../mycoefile_dec.coe} \
 CONFIG.Coefficient_Fractional_Bits {0} \
 CONFIG.Data_Fractional_Bits {15} \
 CONFIG.Coefficient_Sets {1} \
