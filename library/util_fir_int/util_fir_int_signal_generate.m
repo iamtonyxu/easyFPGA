@@ -3,7 +3,7 @@ clear all;
 clc;
 
 Fs = 122.88e6; % Sampling frequency
-Fc = [3.072e6] ; % Cutoff frequency
+Fc = [1.024e6] ; % tone frequency
 Amp = [0.8]; % Amplitude
 interp_factor = 8;
 
@@ -18,20 +18,15 @@ s = Amp(1)*exp(1j*2*pi*Fc(1)*t);
 % Call the function to process the complex signal and save it to a file
 convert_and_save_complex_signal(s, 'waveform.txt');
 
-% interpolate signal by 8x
+%% method-1. function interp
 [s_interp, b] = interp(s, interp_factor, 8, 0.618);
 % b = intfilt(interp_factor,8,0.618)'; % the same coeffs generated using function intfilt and interp
 % fvtool(b);
-% recalculate s_interp using FPGA method
-s_interp = custom_interpolation(b, interp_factor, [s,s]);
-s_interp = s_interp(1:interp_factor*length(s),1);
-convert_and_save_complex_signal(s_interp, 'ifir_out_matlab.txt');
-
 % save the coefficients to a file
 hq = dfilt.dffir(b);
 set(hq,'arithmetic','fixed'); coewrite(hq,10,'mycoefile_int');
 
-% display signal in time-domain
+%display signal in time-domain
 figure;
 subplot(2,1,1);
 plot(t, real(s), 'bo'); hold on
@@ -43,6 +38,39 @@ plot(t, imag(s), 'bo'); hold on
 plot(t_interp, imag(s_interp), '--r.');
 title('data-q before vs after interp x8');
 legend('before', 'after');
+
+%% method-2. insert zeros then pass a lp filter
+% note: with the same filter coeffs
+s1 = s.';
+s1 = [s1, zeros(length(s),7)].';
+s1 = reshape(s1, length(s)*8, 1);
+%figure; plot(imag(s), '--.');
+%figure; plot(imag(s1), '--.');
+s2 = conv(b, [s1;s1]);
+s2 = s2(64+(1:length(s_interp)));
+
+figure;
+plot(imag(s2), '--.'); hold on
+plot(imag(s_interp), '--o');
+plot(imag(s2-s_interp.'));
+title('method-2 vs method-1');
+
+%% method-3. recalculate s_interp using FPGA method
+s3 = custom_interpolation(b, interp_factor, [s,s]);
+s3 = s3(1:interp_factor*length(s),1);
+convert_and_save_complex_signal(s3, 'ifir_out_matlab.txt');
+
+figure;
+plot(imag(s3), '--.'); hold on
+plot(imag(s_interp), '--o');
+plot(imag(s3-s_interp.'));
+title('method-3 vs method-1');
+
+figure;
+plot(imag(s3), '--.'); hold on
+plot(imag(s2), '--o');
+plot(imag(s3-s2));
+title('method-3 vs method-2');
 
 %% interp method
 plot_signal_freq_domain(Fs, interp_factor, s, s_interp);
@@ -95,5 +123,9 @@ function s_interp = custom_interpolation(b, interp_factor, s)
         tmp = conv(hh(i,:), s);
         s1(i,:) = tmp(1, 9:end-7);
     end
+    
+    %figure;
+    %plot(imag(s1(:,1:length(s)/2).'), '--.');
+
     s_interp = reshape(s1, interp_factor * length(s), 1);
 end
