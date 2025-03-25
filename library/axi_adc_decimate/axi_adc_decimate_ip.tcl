@@ -12,11 +12,15 @@ adi_ip_files axi_adc_decimate [list \
   "$ad_hdl_dir/library/common/ad_iqcor.v" \
   "$ad_hdl_dir/library/xilinx/common/ad_mul.v" \
   "$ad_hdl_dir/library/xilinx/common/up_xfer_cntrl_constr.xdc" \
+  "$ad_hdl_dir/library/util_cic/cic_int.v" \
+  "$ad_hdl_dir/library/util_cic/cic_comb.v" \
   "fir_decim.v" \
   "cic_decim.v" \
   "axi_adc_decimate_filter.v" \
   "axi_adc_decimate_reg.v" \
-  "axi_adc_decimate.v" ]
+  "axi_adc_decimate.v" \
+  "axi_adc_decimate_tb.v" \
+  ]
 
 adi_ip_properties axi_adc_decimate
 
